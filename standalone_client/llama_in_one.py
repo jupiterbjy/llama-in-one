@@ -35,110 +35,64 @@ py -m pip install psutil llama-cpp-python httpx --extra-index-url https://abetle
 """
 
 import base64
-import itertools
 import json
 import pathlib
 import logging
 import argparse
-import time
 import zlib
-from typing import List, TypedDict, Tuple, Callable, Any, Dict
+from typing import List, TypedDict, Tuple, Callable, Any
 from collections.abc import Generator, Iterator
+from urllib.parse import urlparse
 from contextlib import contextmanager
 
 import httpx
+import rich
 from llama_cpp import Llama, LlamaCache
 from psutil import cpu_count
-
+from rich.live import Live
 
 # --- DEFAULT CONFIG ---
+# Change default config here.
+# Some of these can be overridden by arguments.
 
-class Config:
-    """Default config class holding envvars and constants.
-    Instance this and change to your liking."""
+MODEL_URL = r"""
+https://huggingface.co/MaziyarPanahi/Llama-3-8B-Instruct-32k-v0.1-GGUF/resolve/main/Llama-3-8B-Instruct-32k-v0.1.Q6_K.gguf
+""".strip()
 
-    # -- GLOBAL SETUP --
+# Initial prompt added to start of chat
+DEFAULT_PROMPT = "You are an assistant who proficiently answers to questions."
 
-    # Prefix for commands
-    COMMAND_PREFIX = ":"
+# Subdirectory used for saving downloaded model files
+LLM_SUBDIR = "_llm"
 
-    # Subdirectory used for saving downloaded model files
-    LLM_SUBDIR = "_llm"
+# Subdirectory used for saved sessions
+SESSION_SUBDIR = "_session"
 
-    # Subdirectory used for saved sessions
-    SESSION_SUBDIR = "_session"
+DEFAULT_TOKENS = 4096
 
-    MODEL_PATH = pathlib.Path(__file__).parent / LLM_SUBDIR
+DEFAULT_CONTEXT_LENGTH = 32000
 
-    SESSION_PATH = MODEL_PATH.parent / SESSION_SUBDIR
+DEFAULT_SEED = -1
 
-    def __init__(self):
-        # link to model url.
-        self.model_url = (
-            "https://huggingface.co/MaziyarPanahi/Llama-3-8B-Instruct-32k-v0.1-GGUF/resolve/main/"
-            "Llama-3-8B-Instruct-32k-v0.1.Q6_K.gguf"
-        )
+DEFAULT_TEMPERATURE = 0.7
 
-        self.model_name = pathlib.Path(self.model_url).name
+LLM_VERBOSE = False
 
-        # Initial prompt added to start of chat.
-        self.init_prompt = "You are an assistant who proficiently answers to questions."
+SERVER_MODE = False
 
-        # Default seed. Change this value to get reproducible results.
-        self.seed = -1
+COMMAND_PREFIX = ":"
+# STOP_AT = ["\n"]
 
-        # Default temperature for model
-        self.temp = 0.7
 
-        # CPU Thread Count
-        self.n_threads = cpu_count(logical=False)
+# --- GLOBAL SETUP ---
 
-        # Input token length
-        self.input_length = 32768
+MODEL_PATH = pathlib.Path(__file__).parent / LLM_SUBDIR
+MODEL_PATH.mkdir(exist_ok=True)
 
-        # Context window length
-        self.context_length = 32768
+SESSION_PATH = MODEL_PATH.parent / SESSION_SUBDIR
+SESSION_PATH.mkdir(exist_ok=True)
 
-        # llama-cpp-python verbose flag
-        self.verbose = False
-
-        self.MODEL_PATH.mkdir(exist_ok=True)
-        self.SESSION_PATH.mkdir(exist_ok=True)
-
-    def json_serialize(self) -> str:
-        """Serializes config to json string."""
-
-        return json.dumps(
-            {
-                "model_url": self.model_url,
-                "init_prompt": self.init_prompt,
-                "seed": self.seed,
-                "temp": self.temp,
-                "n_threads": self.n_threads,
-                "input_length": self.input_length,
-                "context_length": self.context_length,
-                "verbose": self.verbose,
-            }
-        )
-
-    @classmethod
-    def json_deserialize(cls, serialized: str) -> "Config":
-        """Deserializes json string to Config instance."""
-
-        data = json.loads(serialized)
-        config = cls()
-
-        config.model_url = data["model_url"]
-        config.init_prompt = data["init_prompt"]
-        config.seed = data["seed"]
-        config.temp = data["temp"]
-        config.n_threads = data["n_threads"]
-        config.input_length = data["input_length"]
-        config.context_length = data["context_length"]
-        config.verbose = data["verbose"]
-        config.command_prefix = data["command_prefix"]
-
-        return config
+THREAD_COUNT = cpu_count(logical=False)
 
 
 # --- LOGGER CONFIG ---
@@ -161,24 +115,20 @@ def progress_manager(size: int):
 
     digits = len(str(size))
     accumulated = 0
-    spinny_spin_boy = itertools.cycle("|/-\\")
 
     def progress(amount):
         nonlocal accumulated
         accumulated += amount
         print(
-            f"{next(spinny_spin_boy)} {int(100 * accumulated / size):>3}% | {accumulated:{digits}}/{size}",
+            f"{int(100 * accumulated / size):>3}% | {accumulated:{digits}}/{size}",
             end="\r",
         )
 
-    # print the 0 progress first
     progress(0)
 
-    # yield progress advancing function
     try:
         yield progress
     finally:
-        # advance to newline as cursor is at \r
         print()
 
 
@@ -198,12 +148,28 @@ class StreamWrap:
 
     def __init__(self, gen: Generator):
         self._gen = gen
-        self.reason = ""
+        self.value = None
 
     def __iter__(self):
-        self.reason = yield from self._gen
-        return self.reason
+        self.value = yield from self._gen
+        return self.value
 
+
+class StreamCumulative:
+    """Cumulative stream generator"""
+
+    def __init__(self, gen: Generator):
+        self._gen = gen
+        self._buffer = ""
+
+    def __iter__(self):
+        for chunk in self._gen:
+            delta = chunk["choices"][0]["delta"]
+
+            if "content" in delta:
+                self._buffer += delta["content"]
+
+            yield self._buffer
 
 # --- WRAPPER ---
 
@@ -213,24 +179,61 @@ class LLMWrapper:
 
     def __init__(
         self,
-        config: Config,
+        model_url,
+        seed=DEFAULT_SEED,
+        context_length=DEFAULT_CONTEXT_LENGTH,
         *args,
         **kwargs,
     ):
-        self.model_path = config.MODEL_PATH / pathlib.Path(config.model_url).name
+        self.model_url = model_url
+
+        file_name = pathlib.Path(urlparse(model_url).path).name
+        self.model_path = MODEL_PATH / file_name
+        self.model_name = self.model_path.stem
+
+        self._ensure_downloaded()
 
         self.llm = Llama(
             self.model_path.as_posix(),
-            seed=config.seed,
-            n_ctx=config.context_length,
-            verbose=config.verbose,
-            n_threads=config.n_threads,
+            seed=seed,
+            n_ctx=context_length,
+            verbose=LLM_VERBOSE,
+            n_threads=THREAD_COUNT,
             *args,
             **kwargs,
         )
 
     def __str__(self):
-        return f"LLMWrapper({self.model_path.name})"
+        return f"LLMWrapper({self.model_name})"
+
+    def _ensure_downloaded(self):
+        """Make sure file exists, if not download from self.model_url.
+        This is to strip huggingface module dependency."""
+
+        # if exists then return, no hash check cause lazy
+        if self.model_path.exists():
+            LOGGER.info(f"Found model {self.model_name}")
+            return
+
+        LOGGER.info(f"Downloading from {self.model_url}")
+
+        # write with different extension
+        temp = self.model_path.with_suffix(".temp")
+
+        with (
+            httpx.stream("GET", self.model_url, follow_redirects=True) as stream,
+            temp.open("wb") as fp,
+        ):
+            length = int(stream.headers["content-length"])
+
+            with progress_manager(length) as progress:
+                for data in stream.iter_bytes():
+                    fp.write(data)
+                    progress(len(data))
+
+        # rename back, we succeeded.
+        temp.rename(self.model_path)
+        LOGGER.info("Download complete")
 
     def create_chat_completion(self, messages: List[dict], **kwargs) -> Iterator:
         """Creates chat completion. This just wraps the original function for type hinting."""
@@ -250,82 +253,34 @@ class LLMWrapper:
         self.llm.set_cache(cache)
 
 
-# --- LLM Manager ---
-
-class LLMInstances:
-    """Manages global LLMWrapper instances per model"""
-
-    # model url: LLMWrapper pair
-    models: Dict[str, LLMWrapper] = {}
-
-    @classmethod
-    def get_model(cls, model_name: str, config: Config) -> LLMWrapper:
-        """Get model by url. If not exists, create one and return."""
-
-        if model_name not in cls.models:
-            cls._ensure_downloaded(config)
-            cls.models[model_name] = LLMWrapper(config)
-
-        return cls.models[model_name]
-
-    @classmethod
-    def _ensure_downloaded(cls, config: Config):
-        """Make sure file exists, if not download from self.model_url.
-        This is to strip huggingface module dependency."""
-
-        # if exists then return, no hash check cause lazy
-        path = config.MODEL_PATH / config.model_name
-        if path.exists():
-            LOGGER.info(f"Found model {config.model_name}")
-            return
-
-        LOGGER.info(f"Downloading from {config.model_url}")
-
-        # write with different extension
-        temp = path.with_suffix(".temp")
-
-        with (
-            httpx.stream("GET", config.model_url, follow_redirects=True) as stream,
-            temp.open("wb") as fp,
-        ):
-            length = int(stream.headers["content-length"])
-
-            with progress_manager(length) as progress:
-                for data in stream.iter_bytes():
-                    fp.write(data)
-                    progress(len(data))
-
-        # rename back, we succeeded.
-        temp.rename(path)
-        LOGGER.info("Download complete")
-
-
 class ChatSession:
     """Represents single chat session"""
 
     def __init__(
         self,
         uuid: str,
-        config: Config,
-        init_prompt: str = "",
+        llm: LLMWrapper,
+        init_prompt="",
+        output_json=False,
+        max_tokens=DEFAULT_TOKENS,
         enable_cache=True,
     ):
         self.uuid = uuid
-        self.llm = LLMInstances.get_model(config.model_name, config)
+        self.llm = llm
 
-        self.config = config
+        self.preprocessor = lambda x: x
+        prompt = f"{DEFAULT_PROMPT} {init_prompt}".strip()
+        self.resp_format = None
 
-        # self.resp_format = None
-        # self.preprocessor = lambda x: x
-        #
-        # if output_json:
-        #     self.preprocessor = json.loads
-        #     prompt += " You outputs in JSON."
-        #     self.resp_format = {"type": "json_object"}
+        if output_json:
+            self.preprocessor = json.loads
+            prompt += " You outputs in JSON."
+            self.resp_format = {"type": "json_object"}
+
+        self.temperature = 0.7
+        self.max_tokens = max_tokens
 
         self.messages: List[Message] = []
-
-        prompt = f"{config.init_prompt} {init_prompt}".strip()
         self.system_send(prompt)
 
         self.cache = LlamaCache() if enable_cache else None
@@ -340,9 +295,11 @@ class ChatSession:
             {
                 "uuid": self.uuid,
                 "messages": json.dumps(self.messages),
-                "temperature": self.config.temp,
-                "max_tokens": self.config.input_length,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+                "resp_format": self.resp_format,
                 "enable_cache": self.cache is not None,
+                "output_json": self.preprocessor == json.loads,
             }
         )
         # https://stackoverflow.com/a/4845324/10909029
@@ -350,17 +307,20 @@ class ChatSession:
         return compressed
 
     @classmethod
-    def deserialize(cls, compressed: bytes):
+    def deserialize(cls, compressed: bytes, llm: LLMWrapper):
         """Deserializes session"""
 
         serialized = zlib.decompress(base64.b64decode(compressed))
 
         data = json.loads(serialized)
-        data["config"] = Config.json_deserialize(data["config"])
 
         session = cls(
+            llm,
             data["uuid"],
-            data["config"],
+            "",
+            data["output_json"],
+            data["max_tokens"],
+            data["enable_cache"],
         )
         session.messages = json.loads(data["messages"])
         session.temperature = data["temperature"]
@@ -372,19 +332,19 @@ class ChatSession:
     def save_session(self):
         """Saves session in SESSION_SUBDIR."""
 
-        with open(self.config.SESSION_PATH / f"{self.uuid}", "wb") as fp:
+        with open(SESSION_PATH / f"{self.uuid}", "wb") as fp:
             fp.write(self.serialize())
 
     @classmethod
-    def load_session(cls, uuid: str) -> "ChatSession":
+    def load_session(cls, uuid: str, llm: LLMWrapper) -> "ChatSession":
         """Opens session from SESSION_SUBDIR.
 
         Raises:
             FileNotFoundError: When session file for given UUID is missing.
         """
 
-        with open(Config.SESSION_PATH / f"{uuid}", "rb") as fp:
-            return ChatSession.deserialize(fp.read())
+        with open(SESSION_PATH / f"{uuid}", "rb") as fp:
+            return ChatSession.deserialize(fp.read(), llm)
 
     def clear(self, new_init_prompt):
         """Clears session history excluding first system prompt.
@@ -418,13 +378,14 @@ class ChatSession:
         # generate message and append back to message list
         output = self.llm.create_chat_completion_stream(
             messages=self.messages,
-            temperature=self.config.temp,
-            max_tokens=self.config.input_length,
+            temperature=self.temperature,
+            response_format=self.resp_format,
+            max_tokens=self.max_tokens,
             stream=True,
         )
 
         # type hint to satisfy linter
-        current_role = ""
+        current_role: str = ""
         current_role_output = ""
         finish_reason = "None"
 
@@ -436,7 +397,7 @@ class ChatSession:
                 finish_reason = chunk["choices"][0]["finish_reason"]
 
             if "role" in delta:
-                current_role = str(delta["role"])
+                current_role = delta["role"]
 
             elif "content" in delta:
                 current_role_output += delta["content"]
@@ -444,6 +405,24 @@ class ChatSession:
 
         self.messages.append({"role": current_role, "content": current_role_output})
         return finish_reason
+
+    def get_reply(self, content: str, role="user") -> Tuple[str, str | dict]:
+        """Send message to llm and get reply iterator. Returns (stop reason, content).
+        Can return dictionary if json output is enabled."""
+
+        # append user message
+        self.messages.append({"role": role, "content": content})
+
+        # generate message and append back to message list
+        reason, msg = self.llm.create_chat_completion(
+            messages=self.messages,
+            temperature=self.temperature,
+            response_format=self.resp_format,
+            max_tokens=self.max_tokens,
+        )
+        self.messages.append(msg)
+
+        return reason, self.preprocessor(msg["content"])
 
 
 # --- COMMANDS ---
@@ -510,7 +489,7 @@ class CommandMap:
         """
 
         session.temperature = float(amount_str)
-        print(f"Temperature set to {session.config.temp}.")
+        print(f"Temperature set to {session.temperature}.")
         return True
 
     @staticmethod
@@ -522,7 +501,7 @@ class CommandMap:
         return True
 
     @staticmethod
-    def save(session: ChatSession) -> bool:
+    def save(session: ChatSession, prompt: str) -> bool:
         """Save the chat session."""
 
         session.save_session()
@@ -534,17 +513,9 @@ class CommandMap:
 
 
 class StandaloneMode:
-    def __init__(self, verbose=False, start_new_session=False, load_session="") -> None:
+    def __init__(self):
+        self.llm = LLMWrapper(MODEL_URL)
         self.session: ChatSession | None = None
-
-        self.config: Config = Config()
-
-        self.command_map = CommandMap()
-
-        self.config.verbose = verbose
-
-        self.start_new_session = start_new_session
-        self.load_session = load_session
 
     def menu(self):
         """Show menu"""
@@ -565,74 +536,58 @@ class StandaloneMode:
 
             match choice:
                 case 1:
-                    self.session = ChatSession(input("Chat Title >> "), self.config)
+                    self.session = ChatSession("not_set", self.llm)
                     return
                 case 2:
                     # validate uuid
                     try:
                         self.session = ChatSession.load_session(
-                            input("Chat Title >> ")
+                            input("uuid >> "), self.llm
                         )
                     except FileNotFoundError:
                         continue
 
-    def prep_session(self):
-        """Prepares sessions by either creating new or loading existing one."""
-
-        if self.start_new_session:
-            self.session = ChatSession(
-                f"new_chat_{int(time.time())}",
-                self.config,
-            )
-        elif self.load_session:
-            try:
-                self.session = ChatSession.load_session(self.load_session)
-            except FileNotFoundError:
-                print(f"Session '{self.load_session}' not found.")
-                self.menu()
-        else:
-            self.menu()
-
-    def _exchange_turn(self):
-        print("----------------------------")
-        user_input = input("[You]\n>> ")
-
-        print("\n----------------------------")
-        if user_input.startswith(Config.COMMAND_PREFIX):
-            print("[Config]")
-            # it's some sort of command. cut at first whitespace if any.
-            sections = user_input[len(Config.COMMAND_PREFIX):].split(" ", maxsplit=1)
-
-            try:
-                self.command_map.command(
-                    self.session,
-                    sections[0],
-                    None if len(sections) == 1 else sections[1],
-                )
-            except Exception as err:
-                print(err)
-
-        else:
-            print("[Bot]")
-            gen = StreamWrap(self.session.get_reply_stream(user_input))
-
-            # flush token by token, so it doesn't group up and print at once
-            # people willingly wait some extra overhead to complete the sentence to see the progress
-            for token in gen:
-                print(token, end="", flush=True)
-
-            print(f"\n\n[Stop reason: {gen.reason}]")
-
     def run(self):
-        """Runs standalone mode in loop."""
+        """Runs standalone mode"""
 
-        self.prep_session()
+        self.menu()
 
+        command_map = CommandMap()
         run = True
 
         while run:
-            self._exchange_turn()
-            run = self.session is not None
+            print("----------------------------")
+            user_input = input("[You]\n>> ")
+
+            print("\n----------------------------")
+            if user_input.startswith(COMMAND_PREFIX):
+                # it's some sort of command. cut at first whitespace if any.
+                sections = user_input[1:].split(" ", maxsplit=1)
+
+                try:
+                    run = command_map.command(
+                        self.session,
+                        sections[0],
+                        None if len(sections) == 1 else sections[1],
+                    )
+                except Exception as err:
+                    print(err)
+
+            else:
+                print("[Bot]")
+                gen = StreamWrap(self.session.get_reply_stream(user_input))
+
+                # flush token by token, so it doesn't group up and print at once
+                # people willingly wait some extra overhead to complete the sentence to see the progress
+                console = rich.Console()
+
+                with Live(console, refresh_per_second=10) as live:
+                    # for token in gen:
+                    #   print(token, end="", flush=True)
+
+                    live.update(gen)
+
+                print(f"\n\n[Stop reason: {gen.value}]")
 
 
 # --- MAIN ---
@@ -640,34 +595,24 @@ class StandaloneMode:
 if __name__ == "__main__":
     _parser = argparse.ArgumentParser()
     _parser.add_argument(
+        "-s",
+        "--server-mode",
+        action="store_true",
+        default=SERVER_MODE,
+    )
+    _parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
-        help="Enables verbose output.",
-    )
-    _parser.add_argument(
-        "-n",
-        "--new-session",
-        action="store_true",
-        default=False,
-        help="Create new session on start."
-    )
-    _parser.add_argument(
-        "-l",
-        "--load-session",
-        type=str,
-        default="",
-        help="Load session by given title on start.",
-    )
-    _parser.add_argument(
-        "-d",
-        "--directory",
-        type=pathlib.Path,
-        default=pathlib.Path(__file__).parent,
-        help="Directory model can see. Default is script's parent directory.",
+        default=LLM_VERBOSE,
     )
 
     _args = _parser.parse_args()
+    LLM_VERBOSE = _args.verbose
 
-    _runner = StandaloneMode(_args.verbose, _args.new_session, _args.load_session)
-    _runner.run()
+    if _args.server_mode:
+        # I think we could just use llama.cpp's own server mod...
+        raise NotImplementedError("Server mode Not implemented yet")
+    else:
+        _runner = StandaloneMode()
+        _runner.run()
