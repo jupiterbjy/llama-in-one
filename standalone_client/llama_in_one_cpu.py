@@ -72,6 +72,9 @@ class Config:
 
     SESSION_PATH = MODEL_PATH.parent / SESSION_SUBDIR
 
+    # chat seperator
+    CHAT_SEP = "------------------------------------------------"
+
     def __init__(self):
         # link to model url.
         self.model_url = (
@@ -205,6 +208,32 @@ class StreamWrap:
     def __iter__(self):
         self.reason = yield from self._gen
         return self.reason
+
+
+def get_user_input() -> str:
+    """Get potentially multiline input from user
+    Can't do multiline editing though."""
+
+    lines = []
+
+    print("[You]\n>> ", end="")
+
+    # listen until sentinels - defaults are Ctrl+D for *nix and Ctrl+Z for windows.
+
+    try:
+        while True:
+            line = input()
+
+            # check if it ends with terminal. \x04 automatically stripped so no checks for it
+            if line.endswith("\x1a"):
+                lines.append(line.strip("\x1a"))
+                break
+
+            lines.append(line)
+    except EOFError:
+        pass
+
+    return "\n".join(lines)
 
 
 # --- WRAPPER ---
@@ -520,7 +549,7 @@ class CommandMap:
         return True
 
     @staticmethod
-    def save(session: ChatSession) -> bool:
+    def save(session: ChatSession, _) -> bool:
         """Save the chat session."""
 
         session.save_session()
@@ -591,46 +620,69 @@ class StandaloneMode:
         else:
             self.menu()
 
-    def _exchange_turn(self):
-        print("----------------------------")
-        user_input = input("[You]\n>> ")
+    def _run_command(self, user_input: str) -> bool:
+        """Try to run given command return boolean whether session should continue or not."""
 
-        print("\n----------------------------")
-        if user_input.startswith(Config.COMMAND_PREFIX):
-            print("[Config]")
-            # it's some sort of command. cut at first whitespace if any.
-            sections = user_input[len(Config.COMMAND_PREFIX):].split(" ", maxsplit=1)
+        if not user_input.startswith(Config.COMMAND_PREFIX):
+            return False
 
-            try:
-                self.command_map.command(
-                    self.session,
-                    sections[0],
-                    None if len(sections) == 1 else sections[1],
-                )
-            except Exception as err:
-                print(err)
+        print("[Command]")
 
-        else:
-            print("[Bot]")
-            gen = StreamWrap(self.session.get_reply_stream(user_input))
+        # it's some sort of command. cut at first whitespace if any.
+        sections = user_input[len(Config.COMMAND_PREFIX):].split(" ", maxsplit=1)
 
-            # flush token by token, so it doesn't group up and print at once
-            # people willingly wait some extra overhead to complete the sentence to see the progress
-            for token in gen:
-                print(token, end="", flush=True)
+        continue_session = True
 
-            print(f"\n\n[Stop reason: {gen.reason}]")
+        try:
+            continue_session = self.command_map.command(
+                self.session,
+                sections[0],
+                None if len(sections) == 1 else sections[1],
+            )
+        except Exception as err:
+            print(type(err).__name__, err)
+
+        # print newline afterward for consistency
+        print()
+        return continue_session
+
+    def _exchange_turn(self) -> bool:
+        """Exchanges chat turn and returns False if chat should stop."""
+
+        print(self.config.CHAT_SEP)
+        user_input = get_user_input()
+
+        # check if it was empty - if so, return so that we get new prompt.
+        if not user_input.strip():
+            return True
+
+        print("\n" + self.config.CHAT_SEP)
+        if user_input.startswith(self.config.COMMAND_PREFIX):
+            return self._run_command(user_input)
+
+        print("[Bot]")
+        gen = StreamWrap(self.session.get_reply_stream(user_input))
+
+        # flush token by token, so it doesn't group up and print at once
+        # people willingly wait some extra overhead to complete the sentence to see the progress
+        for token in gen:
+            print(token, end="", flush=True)
+
+        print(f"\n\n[Stop reason: {gen.reason}]")
+
+        return True
 
     def run(self):
         """Runs standalone mode in loop."""
 
         self.prep_session()
 
+        print("Ctrl+Z + Enter (win) / Ctrl+D (nix) to complete message.")
+
         run = True
 
         while run:
-            self._exchange_turn()
-            run = self.session is not None
+            run = self._exchange_turn()
 
 
 # --- MAIN ---
