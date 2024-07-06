@@ -78,6 +78,8 @@ class Config:
             "https://huggingface.co/MaziyarPanahi/Llama-3-8B-Instruct-32k-v0.1-GGUF/resolve/main/"
             "Llama-3-8B-Instruct-32k-v0.1.Q6_K.gguf"
         )
+        # https://huggingface.co/bartowski/Gemma-2-9B-It-SPPO-Iter3-GGUF/resolve/main/Gemma-2-9B-It-SPPO-Iter3-Q6_K.gguf
+        # TODO: Add lexi v2 if it releases
 
         self.model_name = pathlib.Path(self.model_url).name
 
@@ -305,12 +307,11 @@ class ChatSession:
 
     def __init__(
         self,
-        uuid: str,
+        title: str,
         config: Config,
         init_prompt: str = "",
-        enable_cache=True,
     ):
-        self.uuid = uuid
+        self.title = title
         self.llm = LLMInstances.get_model(config.model_name, config)
 
         self.config = config
@@ -328,21 +329,19 @@ class ChatSession:
         prompt = f"{config.init_prompt} {init_prompt}".strip()
         self.system_send(prompt)
 
-        self.cache = LlamaCache() if enable_cache else None
+        self.cache = LlamaCache()
 
     def __str__(self):
-        return f"ChatSession({self.uuid})"
+        return f"ChatSession({self.title})"
 
     def serialize(self) -> bytes:
         """Serializes and compress session into plain text"""
 
         raw = json.dumps(
             {
-                "uuid": self.uuid,
-                "messages": json.dumps(self.messages),
-                "temperature": self.config.temp,
-                "max_tokens": self.config.input_length,
-                "enable_cache": self.cache is not None,
+                "title": self.title,
+                "config": self.config.json_serialize(),
+                "messages": self.messages,
             }
         )
         # https://stackoverflow.com/a/4845324/10909029
@@ -354,25 +353,20 @@ class ChatSession:
         """Deserializes session"""
 
         serialized = zlib.decompress(base64.b64decode(compressed))
-
         data = json.loads(serialized)
-        data["config"] = Config.json_deserialize(data["config"])
 
         session = cls(
-            data["uuid"],
-            data["config"],
+            data["title"],
+            Config.json_deserialize(data["config"]),
         )
         session.messages = json.loads(data["messages"])
-        session.temperature = data["temperature"]
-        session.max_tokens = data["max_tokens"]
-        session.resp_format = data["resp_format"]
 
         return session
 
     def save_session(self):
         """Saves session in SESSION_SUBDIR."""
 
-        with open(self.config.SESSION_PATH / f"{self.uuid}", "wb") as fp:
+        with open(self.config.SESSION_PATH / f"{self.title}", "wb") as fp:
             fp.write(self.serialize())
 
     @classmethod
@@ -407,6 +401,10 @@ class ChatSession:
                 "content": prompt,
             }
         )
+
+    def send_discarding_reply(self, content: str):
+        """Send message while ignoring reply it generate.
+        This is alternative when system role is not supported."""
 
     def get_reply_stream(self, content: str, role="user") -> Generator[str]:
         """get_reply with streaming. Does not support json output mode.
@@ -526,7 +524,7 @@ class CommandMap:
         """Save the chat session."""
 
         session.save_session()
-        print(f"Session saved as '{session.uuid}'.")
+        print(f"Session saved as '{session.title}'.")
         return True
 
 
@@ -658,13 +656,6 @@ if __name__ == "__main__":
         type=str,
         default="",
         help="Load session by given title on start.",
-    )
-    _parser.add_argument(
-        "-d",
-        "--directory",
-        type=pathlib.Path,
-        default=pathlib.Path(__file__).parent,
-        help="Directory model can see. Default is script's parent directory.",
     )
 
     _args = _parser.parse_args()
