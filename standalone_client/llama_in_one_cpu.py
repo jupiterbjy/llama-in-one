@@ -536,7 +536,7 @@ class CommandMap:
             ValueError: On invalid amount string
         """
 
-        session.temperature = float(amount_str)
+        session.config.temp = float(amount_str)
         print(f"Temperature set to {session.config.temp}.")
         return True
 
