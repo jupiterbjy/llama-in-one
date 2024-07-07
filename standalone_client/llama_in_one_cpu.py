@@ -529,7 +529,7 @@ class CommandMap:
         return True
 
     @staticmethod
-    def temperature(session: ChatSession, amount_str: str) -> bool:
+    def temp(session: ChatSession, amount_str: str) -> bool:
         """Set model temperature to given value.
 
         Raises:
