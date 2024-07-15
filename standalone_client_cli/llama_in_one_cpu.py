@@ -78,11 +78,9 @@ class Config:
     def __init__(self):
         # link to model url.
         self.model_url = (
-            "https://huggingface.co/MaziyarPanahi/Llama-3-8B-Instruct-32k-v0.1-GGUF/resolve/main/"
-            "Llama-3-8B-Instruct-32k-v0.1.Q6_K.gguf"
+            "https://huggingface.co/bartowski/Llama-3-Instruct-8B-SPPO-Iter3-GGUF/"
+            "resolve/main/Llama-3-Instruct-8B-SPPO-Iter3-Q5_K_S.gguf"
         )
-        # https://huggingface.co/bartowski/Gemma-2-9B-It-SPPO-Iter3-GGUF/resolve/main/Gemma-2-9B-It-SPPO-Iter3-Q6_K.gguf
-        # TODO: Add lexi v2 if it releases
 
         self.model_name = pathlib.Path(self.model_url).name
 
@@ -106,9 +104,6 @@ class Config:
 
         # llama-cpp-python verbose flag
         self.verbose = False
-
-        self.MODEL_PATH.mkdir(exist_ok=True)
-        self.SESSION_PATH.mkdir(exist_ok=True)
 
     def json_serialize(self) -> str:
         """Serializes config to json string."""
@@ -168,7 +163,7 @@ def progress_manager(size: int):
     accumulated = 0
     spinny_spin_boy = itertools.cycle("|/-\\")
 
-    def progress(amount):
+    def _progress(amount):
         nonlocal accumulated
         accumulated += amount
         print(
@@ -177,17 +172,18 @@ def progress_manager(size: int):
         )
 
     # print the 0 progress first
-    progress(0)
+    _progress(0)
 
     # yield progress advancing function
     try:
-        yield progress
+        yield _progress
     finally:
         # advance to newline as cursor is at \r
         print()
 
 
 class Message(TypedDict):
+    """Just a message json type hint."""
     role: str
     content: str
 
