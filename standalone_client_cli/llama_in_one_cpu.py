@@ -44,14 +44,14 @@ import time
 import zlib
 from sys import stdout
 from typing import List, TypedDict, Tuple, Callable, Any, Dict
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterator, Iterable
 from contextlib import contextmanager
 
 import httpx
 from llama_cpp import Llama, LlamaCache
 from psutil import cpu_count
 
-from rich.live import Live
+from rich.console import Console
 from rich.markdown import Markdown
 
 
@@ -666,7 +666,7 @@ class StandaloneMode:
         # flush token by token, so it doesn't group up and print at once
         # people willingly wait some extra overhead to complete the sentence to see the progress
         # for token in gen:
-        #     print(token, end="", flush=True)
+        #     print(token, end="\n", flush=True)
         live_print(gen)
 
         print(f"\n\n[Stop reason: {gen.reason}]")
@@ -686,70 +686,70 @@ class StandaloneMode:
             run = self._exchange_turn()
 
 
-def live_print(content_iterable):
-    """Print content in live."""
+"""
+Llama 3 observed output:
 
-    # We need to cut at specific line to set new live instance.
-    # otherwise we get screen jolting due to Console Rewriting from
-    # non-visible line to current line, making screen go back and forth.
-    # though regex should be avoided due to cost.
+- sometimes output (```language)
+- sometimes output (``, `) separately
 
-    iterator = iter(content_iterable)
+This makes token-by-token impossible, not to mention compatibility
+with other models.
 
-    in_code_block = False
-    code_block_lang = ""
-    at_code_block_opening = False
+I think best way would be parsing after appending.
+"""
 
-    while True:
-        accumulated_line = ""
 
-        with Live(vertical_overflow="ellipsis") as live:
-            for token in iterator:
+def line_by_line_gen(content_iterable: Iterable[str]):
+    line = ""
 
-                # TODO: fix this crap with states or my own formatter using pygment
+    for chunk in content_iterable:
+        line += chunk
+        if "\n" in line:
+            try:
+                line_front, *line_back = line.split("\n")
+            except ValueError:
+                print(line)
+                raise
 
-                # if tail is newline break after print, we'd need new console
-                if token == "\n":
-                    break
+            yield line_front
+            line = "\n".join(line_back)
 
-                if at_code_block_opening:
-                    # if it wasn't newline then this must be language name
-                    code_block_lang = token
-                    at_code_block_opening = False
+
+class State:
+    NORMAL = 0
+    IN_CODE_BLOCK_OPENING = 1
+    IN_CODE_BLOCK = 2
+    IN_CODE_BLOCK_CLOSING = 3
+
+
+def live_print(content_iterable: Iterable[str]):
+    state = State.NORMAL
+    code_block_prefix = "```\n"
+
+    console = Console()
+
+    for line in line_by_line_gen(content_iterable):
+        match state:
+
+            case State.NORMAL:
+                if "```" in line:
+                    state = State.IN_CODE_BLOCK
+                    code_block_prefix = f"```{line.split('```')[-1]}\n"
+                else:
+                    console.print(Markdown(line))
+                    # stdout.write("\33[A")
+
+            case State.IN_CODE_BLOCK:
+                if "```" in line:
+                    # console.print(Markdown(code_block_prefix))
+                    # stdout.write("\x1B[2A\n")
+                    stdout.write("\33[2B\33[1000C\n")
+                    state = State.NORMAL
                     continue
 
-                # is this code block at start of line?
-                # (since llm don't quote normally, won't care about quoted codeblocks)
-                if token.startswith("```"):
-                    if in_code_block:
-                        in_code_block = False
-                        accumulated_line += token
-
-                    else:
-                        # this must be the new codeblock.
-                        in_code_block = True
-                        at_code_block_opening = True
-                        code_block_lang = ""
-                        continue
-
-                # if in codeblock but accumulated_line is empty, should add new codeblock as
-                # this Live console doesn't know about it
-                elif in_code_block and not accumulated_line:
-                    # print("\r")
-                    accumulated_line = f"```{code_block_lang}\n"
-                    accumulated_line += token
-
-                else:
-                    accumulated_line += token
-
-                live.update(Markdown(accumulated_line), refresh=True)
-
-            else:
-                # welp it's drained now
-                break
-
-        # move line up since rich keeps adding multiple newlines in Live.Refresh().
-        stdout.write("\x1B[1A\33[1000C")
+                stdout.write("\33[A\33[1000C")
+                console.print(Markdown(code_block_prefix + line))
+                stdout.write("\33[A\33[1000C")
 
 
 # --- MAIN ---

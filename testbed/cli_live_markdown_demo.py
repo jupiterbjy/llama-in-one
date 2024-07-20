@@ -13,9 +13,7 @@ from typing import Iterable
 
 from rich.live import Live
 from rich.markdown import Markdown
-from pygments import highlight
-from pygments.lexers import MarkdownLexer
-from pygments.formatters import TerminalFormatter
+from rich.console import Console
 
 
 NOTICE = """
@@ -181,12 +179,63 @@ def live_print(content_iterable: Iterable[str]):
                 live.update(Markdown(accumulated_line), refresh=True)
 
 
+class State:
+    NORMAL = 0
+    IN_CODE_BLOCK_OPENING = 1
+    IN_CODE_BLOCK = 2
+    IN_CODE_BLOCK_CLOSING = 3
+
+
+def line_by_line_gen(content_iterable: Iterable[str]):
+    line = ""
+
+    for chunk in content_iterable:
+        line += chunk
+        if "\n" in line:
+            line_front, line_back = line.split("\n")
+
+            yield line_front
+            line = line_back
+
+
+def console_print(content_iterable: Iterable[str]):
+    state = State.NORMAL
+    code_block_prefix = "```\n"
+
+    console = Console()
+
+    for line in line_by_line_gen(content_iterable):
+        match state:
+
+            case State.NORMAL:
+                if "```" in line:
+                    state = State.IN_CODE_BLOCK
+                    code_block_prefix = f"```{line.split('```')[-1]}\n"
+                else:
+                    console.print(Markdown(line))
+                    stdout.write("\33[A")
+
+            case State.IN_CODE_BLOCK:
+                if "```" in line:
+                    # console.print(Markdown(code_block_prefix))
+                    # stdout.write("\x1B[2A\n")
+                    stdout.write("\33[2B\33[1000C\n")
+                    state = State.NORMAL
+                    continue
+
+                console.print(Markdown(code_block_prefix + line))
+                stdout.write("\33[2A\33[1000C")
+
+        # stdout.write(f"\x1B")
+
+
 def dummy_exchange_turn():
     """Exchange turn with dummy reply text."""
 
     while True:
         # live_print_jolting(delayed_iterator(SAMPLE_SPLIT))
-        live_print(delayed_iterator(SAMPLE_SPLIT))
+        # live_print(delayed_iterator(SAMPLE_SPLIT))
+        console_print(delayed_iterator(SAMPLE_SPLIT))
 
         input("Press enter >> ")
 
