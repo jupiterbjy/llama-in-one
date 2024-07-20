@@ -1,13 +1,21 @@
 """
-Python Rich Live Console Demo for Dummy LLM stream output
+Python Rich Live Console Demo for Dummy LLM stream output.
+
+Since it's just whitespace & newline cut it's not accurate at all
+but should be enough to test and fix long output Live data with various MD features.
 
 :Author: jupiterbjy@gmail.com
 """
-
+import itertools
 import time
+from sys import stdout
+from typing import Iterable
 
 from rich.live import Live
 from rich.markdown import Markdown
+from pygments import highlight
+from pygments.lexers import MarkdownLexer
+from pygments.formatters import TerminalFormatter
 
 
 NOTICE = """
@@ -65,41 +73,122 @@ def iter_with_separator(iterable, sep=" "):
         yield item
 
 
+# would prefer for loop but not to dirty place, but for speed
 SAMPLE_SPLIT = [
-    [*iter_with_separator(line.split(" "))]
-    for line in [*iter_with_separator(SAMPLE.split("\n"), "\n")]
+    *itertools.chain(
+        *(
+            iter_with_separator(line.split(" "))
+            for line in [*iter_with_separator(SAMPLE.split("\n"), "\n")]
+        )
+    )
 ]
+
+
+def delayed_iterator(iterable, delay=0.01):
+    """Delays item yield"""
+
+    for item in iterable:
+        time.sleep(delay)
+        yield item
+
+
+def live_print_jolting(content_iterable: Iterable[str]):
+    """First attempt of live print that jolts the console up & down when
+    actual line count (counting text wrap) exceed console height."""
+
+    accumulated_line = ""
+
+    with Live(vertical_overflow="visible") as live:
+        for chunk in content_iterable:
+            accumulated_line += chunk
+            live.update(Markdown(accumulated_line), refresh=True)
+
+
+def live_print(content_iterable: Iterable[str]):
+    """Print content in live."""
+
+    # We need to cut at specific line to set new live instance.
+    # otherwise we get screen jolting due to Console Rewriting from
+    # non-visible line to current line, making screen go back and forth.
+    # though regex should be avoided due to cost.
+
+    iterator = iter(content_iterable)
+
+    in_code_block = False
+    code_block_lang = ""
+
+    is_eof = False
+
+    while not is_eof:
+        accumulated_line = ""
+
+        # set vertical_overflow just in case
+        with Live(vertical_overflow="visible") as live:
+            while True:
+                try:
+                    token = next(iterator)
+                except StopIteration:
+                    is_eof = True
+                    break
+
+                # if tail is newline break after print, we'd need new console
+                if token == "\n":
+                    stdout.write("\x1B[1A\n")
+                    break
+
+                # TODO: fix this crap with states
+
+                # is this code block at start of line?
+                # (since llm don't quote normally, won't care about quoted codeblocks)
+                if token.startswith("```"):
+                    if in_code_block:
+                        in_code_block = False
+
+                    else:
+                        # this must be the new codeblock.
+                        in_code_block = True
+
+                        # not sure if token is ```language or just ```.
+                        if token == "```":
+                            try:
+                                next_token = next(iterator)
+                            except StopIteration:
+                                is_eof = True
+                                break
+
+                            if not next_token == "\n":
+                                # if next token isn't, or doesn't start with newline, must be language name.
+                                code_block_lang = token
+                            else:
+                                # set empty type instead
+                                code_block_lang = ""
+
+                            # now change with token so it's added back later
+                            accumulated_line += token
+                            token = next_token
+
+                        else:
+                            # must have token with it.
+                            code_block_lang = token[3:]
+
+                # if in codeblock but accumulated_line is empty, should add new codeblock as
+                # this Live console doesn't know about it
+                elif in_code_block and not accumulated_line:
+                    # print("\r")
+                    accumulated_line = f"```{code_block_lang}\n"
+
+                accumulated_line += token
+                live.update(Markdown(accumulated_line), refresh=True)
 
 
 def dummy_exchange_turn():
     """Exchange turn with dummy reply text."""
 
-    # TODO: find way to prevent jolting when vertical space is exceeded
-    # Maybe split in every empty newline?
-    # but then how to determine if it's middle of a code block or not?
-    # might need to keep state if it's in code block or not
-
-    in_code_block = False
-    iterator = (chunk for chunk in (chunks for chunks in SAMPLE_SPLIT))
-
     while True:
+        # live_print_jolting(delayed_iterator(SAMPLE_SPLIT))
+        live_print(delayed_iterator(SAMPLE_SPLIT))
+
         input("Press enter >> ")
-
-        accumulated_line = ""
-
-        with Live(refresh_per_second=32, vertical_overflow="visible") as live:
-            for chunks in SAMPLE_SPLIT:
-                for chunk in chunks:
-                    if chunk == "```":
-                        in_code_block = not in_code_block
-
-                    accumulated_line += chunk
-                    live.update(Markdown(accumulated_line))
-                    time.sleep(0.01)
-
-                    # if it had two newlines, then split live once
-                    if accumulated_line.endswith("\n\n"):
-
 
 
 if __name__ == "__main__":
