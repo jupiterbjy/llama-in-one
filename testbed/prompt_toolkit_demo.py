@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from prompt_toolkit import prompt, print_formatted_text, HTML, ANSI
 from prompt_toolkit.formatted_text import PygmentsTokens
 from prompt_toolkit.lexers import PygmentsLexer
+from prompt_toolkit.output import ColorDepth
 from prompt_toolkit.shortcuts import prompt
 
 import pygments
@@ -93,22 +94,42 @@ def line_by_line_gen(content_iterable: Iterable[str]):
             line = line_back
 
 
-class AccumulativeMarkdownParser:
-    def __init__(self):
-        pass
-
-
 tokens = [*pygments.lex(SAMPLE, lexer=MarkdownLexer(style=get_style_by_name('monokai')))]
 
 STYLE = style_from_pygments_cls(get_style_by_name('monokai'))
 
 
-def mock_input():
-    txt = prompt(">> ", lexer=PygmentsLexer(MarkdownLexer))
-
-    print_formatted_text(txt + "\n")
-
-    print_formatted_text(PygmentsTokens(tokens), style=STYLE)
+from prompt_toolkit import Application, HTML
+from markdown_it import MarkdownIt
 
 
-mock_input()
+class ChatApp(Application):
+    def __init__(self):
+        super().__init__(full_screen=True, color_depth=ColorDepth.TRUE_COLOR)
+        self.parser = MarkdownIt()
+
+    def run(self, **kwargs):
+        while True:
+            user_input = prompt("[USER]:\n", lexer=PygmentsLexer(MarkdownLexer), multiline=True, style=STYLE)
+            self.input.flush()
+
+            accumulated = []
+
+            # for token in delayed_iterator(tokens):
+            try:
+                self.output.write_raw(HTML(self.parser.render(SAMPLE)).formatted_text)
+                self.output.cursor_up(3)
+                self.output.erase_end_of_line()
+                self.output.write("meow")
+            except Exception:
+                # print traceback here
+                import traceback
+                traceback.print_exc()
+                input()
+                input()
+                raise
+
+
+if __name__ == '__main__':
+    runner = ChatApp()
+    runner.run()
