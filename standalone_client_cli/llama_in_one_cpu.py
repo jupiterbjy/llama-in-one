@@ -73,6 +73,7 @@ class Config:
     SESSION_SUBDIR = "_session"
 
     MODEL_PATH = pathlib.Path(__file__).parent / LLM_SUBDIR
+    MODEL_PATH.mkdir(exist_ok=True)
 
     SESSION_PATH = MODEL_PATH.parent / SESSION_SUBDIR
 
