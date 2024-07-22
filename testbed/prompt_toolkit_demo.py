@@ -11,7 +11,11 @@ from prompt_toolkit.shortcuts import prompt
 import pygments
 from prompt_toolkit.styles import style_from_pygments_cls
 from pygments.lexers import MarkdownLexer
-from pygments.formatters import HtmlFormatter, TerminalTrueColorFormatter, RawTokenFormatter
+from pygments.formatters import (
+    HtmlFormatter,
+    TerminalTrueColorFormatter,
+    RawTokenFormatter,
+)
 from pygments.styles import get_style_by_name
 from pygments.token import Token
 
@@ -94,23 +98,52 @@ def line_by_line_gen(content_iterable: Iterable[str]):
             line = line_back
 
 
-tokens = [*pygments.lex(SAMPLE, lexer=MarkdownLexer(style=get_style_by_name('monokai')))]
+tokens = [
+    *pygments.lex(SAMPLE, lexer=MarkdownLexer(style=get_style_by_name("monokai")))
+]
 
-STYLE = style_from_pygments_cls(get_style_by_name('monokai'))
+STYLE = style_from_pygments_cls(get_style_by_name("monokai"))
 
 
+from prompt_toolkit.layout.containers import VSplit, Window
 from prompt_toolkit import Application, HTML
+from prompt_toolkit.layout.controls import BufferControl
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.layout.layout import Layout
+
 from markdown_it import MarkdownIt
+
+buffer1 = Buffer()  # Editable buffer.
+
+root_container = VSplit(
+    [
+        Window(
+            content=BufferControl(buffer=buffer1, lexer=PygmentsLexer(MarkdownLexer))
+        ),
+    ]
+)
+
+layout = Layout(root_container)
 
 
 class ChatApp(Application):
     def __init__(self):
-        super().__init__(full_screen=True, color_depth=ColorDepth.TRUE_COLOR)
+        super().__init__(
+            layout=layout,
+            full_screen=True,
+            color_depth=ColorDepth.TRUE_COLOR,
+            style=STYLE,
+        )
         self.parser = MarkdownIt()
 
     def run(self, **kwargs):
         while True:
-            user_input = prompt("[USER]:\n", lexer=PygmentsLexer(MarkdownLexer), multiline=True, style=STYLE)
+            user_input = prompt(
+                "[USER]:\n",
+                lexer=PygmentsLexer(MarkdownLexer),
+                multiline=True,
+                style=STYLE,
+            )
             self.input.flush()
 
             accumulated = []
@@ -124,12 +157,16 @@ class ChatApp(Application):
             except Exception:
                 # print traceback here
                 import traceback
+
                 traceback.print_exc()
                 input()
                 input()
                 raise
 
 
-if __name__ == '__main__':
+# TODO: check this https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/examples/full-screen/simple-demos/autocompletion.py
+
+
+if __name__ == "__main__":
     runner = ChatApp()
     runner.run()
