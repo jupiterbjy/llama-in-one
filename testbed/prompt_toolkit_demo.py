@@ -1,9 +1,22 @@
+"""
+FOR ANYONE TRYING TO STUDY THE PROMPT_TOOLKIT:
+READ PDF RATHER THAN READTHEDOCS, IT'S MORE READABLE AND EASIER TO SEARCH.
+
+https://readthedocs.org/projects/python-prompt-toolkit/downloads/pdf/stable/
+
+---
+
+This is in total mess as I am right now using as scratch pad for learning prompt_toolkit.
+"""
+
 import itertools
 import time
 from collections.abc import Iterable
 
-from prompt_toolkit import prompt, print_formatted_text, HTML, ANSI
+from prompt_toolkit import prompt, print_formatted_text, HTML, ANSI, PromptSession
+from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.formatted_text import PygmentsTokens
+from prompt_toolkit.history import FileHistory, InMemoryHistory
 from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.output import ColorDepth
 from prompt_toolkit.shortcuts import prompt
@@ -113,60 +126,38 @@ from prompt_toolkit.layout.layout import Layout
 
 from markdown_it import MarkdownIt
 
-buffer1 = Buffer()  # Editable buffer.
 
-root_container = VSplit(
-    [
-        Window(
-            content=BufferControl(buffer=buffer1, lexer=PygmentsLexer(MarkdownLexer))
-        ),
-    ]
+# TODO: refer this https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/examples/prompts/clock-input.py
+def bottom_toolbar():
+    # TODO: find out how to do the god darn buttons here
+    return HTML("Press <b>Alt+Enter</b> to send.")
+
+
+display_buffer = Buffer()
+input_buffer = Buffer()
+# history = FileHistory("history.txt")
+history = InMemoryHistory()
+command_completer = WordCompleter(["exit", "quit"])
+
+
+session = PromptSession(
+    history=history,
+    lexer=PygmentsLexer(MarkdownLexer),
+    style=STYLE,
+    color_depth=ColorDepth.TRUE_COLOR,
+    completer=command_completer,
+    multiline=True,
+    bottom_toolbar=bottom_toolbar,
+    enable_history_search=True,
 )
 
-layout = Layout(root_container)
 
+while True:
+    text = session.prompt(
+        ">> ",
+    )
 
-class ChatApp(Application):
-    def __init__(self):
-        super().__init__(
-            layout=layout,
-            full_screen=True,
-            color_depth=ColorDepth.TRUE_COLOR,
-            style=STYLE,
-        )
-        self.parser = MarkdownIt()
+    if text in {"exit", "quit"}:
+        break
 
-    def run(self, **kwargs):
-        while True:
-            user_input = prompt(
-                "[USER]:\n",
-                lexer=PygmentsLexer(MarkdownLexer),
-                multiline=True,
-                style=STYLE,
-            )
-            self.input.flush()
-
-            accumulated = []
-
-            # for token in delayed_iterator(tokens):
-            try:
-                self.output.write_raw(HTML(self.parser.render(SAMPLE)).formatted_text)
-                self.output.cursor_up(3)
-                self.output.erase_end_of_line()
-                self.output.write("meow")
-            except Exception:
-                # print traceback here
-                import traceback
-
-                traceback.print_exc()
-                input()
-                input()
-                raise
-
-
-# TODO: check this https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/examples/full-screen/simple-demos/autocompletion.py
-
-
-if __name__ == "__main__":
-    runner = ChatApp()
-    runner.run()
+    print(text)
