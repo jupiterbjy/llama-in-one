@@ -57,6 +57,7 @@ from rich.markdown import Markdown
 
 # --- DEFAULT CONFIG ---
 
+
 class Config:
     """Default config class holding envvars and constants.
     Instance this and change to your liking."""
@@ -83,8 +84,8 @@ class Config:
     def __init__(self):
         # link to model url.
         self.model_url = (
-            "https://huggingface.co/bartowski/Llama-3-Instruct-8B-SPPO-Iter3-GGUF/"
-            "resolve/main/Llama-3-Instruct-8B-SPPO-Iter3-Q5_K_S.gguf"
+            "https://huggingface.co/mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated-GGUF"
+            "/resolve/main/meta-llama-3.1-8b-instruct-abliterated.Q5_K_M.gguf"
         )
 
         self.model_name = pathlib.Path(self.model_url).name
@@ -96,7 +97,7 @@ class Config:
         self.seed = -1
 
         # Default temperature for model
-        self.temp = 0.7
+        self.temp = 0.99
 
         # CPU Thread Count
         self.n_threads = cpu_count(logical=False)
@@ -189,6 +190,7 @@ def progress_manager(size: int):
 
 class Message(TypedDict):
     """Just a message json type hint."""
+
     role: str
     content: str
 
@@ -199,14 +201,14 @@ def extract_message(response: dict) -> Tuple[str, Message]:
     return response["choices"][0]["finish_reason"], response["choices"][0]["message"]
 
 
-class StreamWrap:
+class StreamWrap(Iterable):
     """Makes return reason available"""
 
     def __init__(self, gen: Generator):
         self._gen = gen
         self.reason = ""
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         self.reason = yield from self._gen
         return self.reason
 
@@ -283,6 +285,7 @@ class LLMWrapper:
 
 
 # --- LLM Manager ---
+
 
 class LLMInstances:
     """Manages global LLMWrapper instances per model"""
@@ -562,6 +565,10 @@ class CommandMap:
 
 
 class StandaloneMode:
+    """
+    Standalone mode runner for llama-cpp-python
+    """
+
     def __init__(self, verbose=False, start_new_session=False, load_session="") -> None:
         self.session: ChatSession | None = None
 
@@ -598,9 +605,7 @@ class StandaloneMode:
                 case 2:
                     # validate uuid
                     try:
-                        self.session = ChatSession.load_session(
-                            input("Chat Title >> ")
-                        )
+                        self.session = ChatSession.load_session(input("Chat Title >> "))
                     except FileNotFoundError:
                         continue
 
@@ -630,7 +635,7 @@ class StandaloneMode:
         print("[Command]")
 
         # it's some sort of command. cut at first whitespace if any.
-        sections = user_input[len(Config.COMMAND_PREFIX):].split(" ", maxsplit=1)
+        sections = user_input[len(Config.COMMAND_PREFIX) :].split(" ", maxsplit=1)
 
         continue_session = True
 
@@ -700,7 +705,16 @@ I think best way would be parsing after appending.
 """
 
 
-def line_by_line_gen(content_iterable: Iterable[str]):
+def line_by_line_gen(content_iterable: Iterable[str]) -> Generator[str]:
+    """Collect tokens and yields line by line.
+
+    Args:
+        content_iterable: Iterable of content to parse.
+
+    Yields:
+        Line by line accumulated content
+    """
+
     line = ""
 
     for chunk in content_iterable:
@@ -717,6 +731,10 @@ def line_by_line_gen(content_iterable: Iterable[str]):
 
 
 class State:
+    """
+    State enum for tracking current context for live printing.
+    """
+
     NORMAL = 0
     IN_CODE_BLOCK_OPENING = 1
     IN_CODE_BLOCK = 2
@@ -724,6 +742,12 @@ class State:
 
 
 def live_print(content_iterable: Iterable[str]):
+    """Perform line-wise formatted live printing.
+
+    Args:
+        content_iterable: Iterable of content to print.
+    """
+
     state = State.NORMAL
     code_block_prefix = "```\n"
 
@@ -768,7 +792,7 @@ if __name__ == "__main__":
         "--new-session",
         action="store_true",
         default=False,
-        help="Create new session on start."
+        help="Create new session on start.",
     )
     _parser.add_argument(
         "-l",
