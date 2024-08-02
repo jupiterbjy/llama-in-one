@@ -221,8 +221,12 @@ class StreamWrap(Iterable):
         self.reason = ""
 
     def __iter__(self) -> Iterator[str]:
-        self.reason = yield from self._gen
-        return self.reason
+        try:
+            self.reason = yield from self._gen
+            return self.reason
+
+        except ValueError as err:
+            raise SystemRoleNotSupported() from err
 
 
 def get_user_input() -> str:
@@ -249,6 +253,13 @@ def get_user_input() -> str:
         pass
 
     return "\n".join(lines)
+
+
+class SystemRoleNotSupported(Exception):
+    """Raised when system role is not supported."""
+
+    def __init__(self, msg="System role is not supported for this model.", *args):
+        super().__init__(msg, *args)
 
 
 # --- WRAPPER ---
@@ -282,8 +293,10 @@ class LLMWrapper:
     def create_chat_completion(self, messages: List[dict], **kwargs) -> Iterator:
         """Creates chat completion. This just wraps the original function for type hinting."""
 
+        # try:
         return self.llm.create_chat_completion(messages, **kwargs)
-
+        # except SystemRoleNotSupported as err:
+    
     def create_chat_completion_stream(self, messages: List[dict], **kwargs):
         """Creates stream chat completion."""
 
