@@ -8,6 +8,10 @@ Dependency installation:
 py -m pip install rich psutil llama-cpp-python httpx --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 ```
 
+Update:
+```
+pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121 --force-reinstall --no-cache-dir
+```
 
 :Author: jupiterbjy@gmail.com
 
@@ -84,11 +88,16 @@ class Config:
     def __init__(self):
         # link to model url.
         self.model_url = (
-            "https://huggingface.co/mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated-GGUF"
-            "/resolve/main/meta-llama-3.1-8b-instruct-abliterated.Q5_K_M.gguf"
+            # "https://huggingface.co/mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated-GGUF"
+            # "/resolve/main/meta-llama-3.1-8b-instruct-abliterated.Q8_0.gguf"
+            # "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"
+            # "/resolve/main/Meta-Llama-3.1-8B-Instruct-Q6_K_L.gguf"
+            # "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
+            # "/resolve/main/tinyllama-1.1b-chat-v1.0.Q5_K_M.gguf",
+            "https://huggingface.co/unsloth/gemma-2-it-GGUF/resolve/main/gemma-2-2b-it.q6_k.gguf?download=true"
         )
 
-        self.model_name = pathlib.Path(self.model_url).name
+        self.model_name = pathlib.Path(self.model_url).name.split("?")[0]
 
         # Initial prompt added to start of chat.
         self.init_prompt = "You are an assistant who proficiently answers to questions."
@@ -97,10 +106,13 @@ class Config:
         self.seed = -1
 
         # Default temperature for model
-        self.temp = 0.99
+        self.temp = 0.9
 
-        # CPU Thread Count
+        # CPU thread count
         self.n_threads = cpu_count(logical=False)
+
+        # gpu layer count
+        self.n_gpu_layers = -1
 
         # Input token length
         self.input_length = 32768
@@ -251,7 +263,7 @@ class LLMWrapper:
         *args,
         **kwargs,
     ):
-        self.model_path = config.MODEL_PATH / pathlib.Path(config.model_url).name
+        self.model_path = config.MODEL_PATH / config.model_name
 
         self.llm = Llama(
             self.model_path.as_posix(),
@@ -259,6 +271,7 @@ class LLMWrapper:
             n_ctx=config.context_length,
             verbose=config.verbose,
             n_threads=config.n_threads,
+            n_gpu_layers=config.n_gpu_layers,
             *args,
             **kwargs,
         )
@@ -671,9 +684,9 @@ class StandaloneMode:
 
         # flush token by token, so it doesn't group up and print at once
         # people willingly wait some extra overhead to complete the sentence to see the progress
-        # for token in gen:
-        #     print(token, end="\n", flush=True)
-        live_print(gen)
+        for token in gen:
+            print(token, end="", flush=True)
+        # live_print(gen
 
         print(f"\n\n[Stop reason: {gen.reason}]")
 
