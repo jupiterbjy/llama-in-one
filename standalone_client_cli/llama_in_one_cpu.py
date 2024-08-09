@@ -94,7 +94,10 @@ class Config:
             # "/resolve/main/Meta-Llama-3.1-8B-Instruct-Q6_K_L.gguf"
             # "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
             # "/resolve/main/tinyllama-1.1b-chat-v1.0.Q5_K_M.gguf",
-            "https://huggingface.co/unsloth/gemma-2-it-GGUF/resolve/main/gemma-2-2b-it.q6_k.gguf?download=true"
+            # "https://huggingface.co/bartowski/gemma-2-2b-it-abliterated-GGUF"
+            # "/resolve/main/gemma-2-2b-it-abliterated-Q5_K_S.gguf?download=true"
+            "https://huggingface.co/bartowski/gemma-2-9b-it-abliterated-GGUF"
+            "/resolve/main/gemma-2-9b-it-abliterated-Q5_K_S.gguf?download=true"
         )
 
         self.model_name = pathlib.Path(self.model_url).name.split("?")[0]
@@ -283,6 +286,8 @@ class LLMWrapper:
             verbose=config.verbose,
             n_threads=config.n_threads,
             n_gpu_layers=config.n_gpu_layers,
+            flash_attn=True,
+            chat_format="gemma",
             *args,
             **kwargs,
         )
@@ -296,7 +301,7 @@ class LLMWrapper:
         # try:
         return self.llm.create_chat_completion(messages, **kwargs)
         # except SystemRoleNotSupported as err:
-    
+
     def create_chat_completion_stream(self, messages: List[dict], **kwargs):
         """Creates stream chat completion."""
 

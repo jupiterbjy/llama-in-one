@@ -19,11 +19,8 @@ STYLE = style_from_pygments_cls(get_style_by_name("monokai"))
 
 buffer1 = Buffer()  # Editable buffer.
 
-root_container = VSplit(
-    [
-        # One window that holds the BufferControl with the default buffer on
-        # the left.
-        Window(content=BufferControl(buffer=buffer1)),
+
+root_container =  Window(content=BufferControl(buffer=buffer1)),
         # A vertical line in the middle. We explicitly specify the width, to
         # make sure that the layout engine will not try to divide the whole
         # width by three for all these windows. The window will simply fill its

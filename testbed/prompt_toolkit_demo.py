@@ -9,6 +9,7 @@ https://readthedocs.org/projects/python-prompt-toolkit/downloads/pdf/stable/
 This is in total mess as I am right now using as scratch pad for learning prompt_toolkit.
 """
 
+import asyncio
 import itertools
 import time
 from collections.abc import Iterable
@@ -99,18 +100,6 @@ def delayed_iterator(iterable, delay=0.01):
         yield item
 
 
-def line_by_line_gen(content_iterable: Iterable[str]):
-    line = ""
-
-    for chunk in content_iterable:
-        line += chunk
-        if "\n" in line:
-            line_front, line_back = line.split("\n")
-
-            yield line_front
-            line = line_back
-
-
 tokens = [
     *pygments.lex(SAMPLE, lexer=MarkdownLexer(style=get_style_by_name("monokai")))
 ]
@@ -123,6 +112,8 @@ from prompt_toolkit import Application, HTML
 from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.layout.layout import Layout
+from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.application import create_app_session
 
 from markdown_it import MarkdownIt
 
@@ -140,24 +131,45 @@ history = InMemoryHistory()
 command_completer = WordCompleter(["exit", "quit"])
 
 
-session = PromptSession(
-    history=history,
-    lexer=PygmentsLexer(MarkdownLexer),
-    style=STYLE,
-    color_depth=ColorDepth.TRUE_COLOR,
-    completer=command_completer,
-    multiline=True,
-    bottom_toolbar=bottom_toolbar,
-    enable_history_search=True,
-)
+async def interactive_shell():
 
-
-while True:
-    text = session.prompt(
-        ">> ",
+    session = PromptSession(
+        history=history,
+        lexer=PygmentsLexer(MarkdownLexer),
+        style=STYLE,
+        color_depth=ColorDepth.TRUE_COLOR,
+        completer=command_completer,
+        multiline=True,
+        bottom_toolbar=bottom_toolbar,
+        enable_history_search=True,
     )
 
-    if text in {"exit", "quit"}:
-        break
+    input_pipe = create_pipe_input()
 
-    print(text)
+    while True:
+        try:
+            text = await session.prompt_async(
+                ">> ",
+            )
+
+            if text in {"exit", "quit"}:
+                break
+        except (EOFError, KeyboardInterrupt):
+            return
+
+        with create_app_session(input=input_pipe):
+            with create_pipe_input() as pipe:
+
+                for token in delayed_iterator(tokens):
+                    pipe.send_text(token[1])
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(interactive_shell())
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        input()
+        raise
