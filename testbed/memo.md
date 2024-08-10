@@ -1,0 +1,4 @@
+- [fullscreen demo](https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/examples/full-screen/full-screen-demo.py)
+- [Scrolling name progressbar](https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/examples/progress-bar/scrolling-task-name.py)
+- [Scrolling](https://stackoverflow.com/questions/66465953/how-do-you-add-pageup-pagedown-keybindings-to-textarea-in-python-prompt-toolkit)
+- 

@@ -6,14 +6,32 @@ but should be enough to test and fix long output Live data with various MD featu
 
 :Author: jupiterbjy@gmail.com
 """
+
+import asyncio
 import itertools
 import time
-from sys import stdout
-from typing import Iterable
+from datetime import datetime
 
-from rich.live import Live
-from rich.markdown import Markdown
-from rich.console import Console
+from prompt_toolkit import Application, HTML
+from prompt_toolkit.application import get_app
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.key_binding import merge_key_bindings, KeyBindings
+from prompt_toolkit.key_binding.bindings.focus import focus_next, focus_previous
+from prompt_toolkit.key_binding.defaults import load_key_bindings
+from prompt_toolkit.layout import ScrollablePane, Layout, BufferControl
+from prompt_toolkit.layout.containers import HSplit, FloatContainer, Window
+from prompt_toolkit.lexers import PygmentsLexer
+from prompt_toolkit.output import ColorDepth
+from prompt_toolkit.styles import style_from_pygments_cls, Style
+from prompt_toolkit.widgets import Frame, TextArea, Label
+from pygments.lexers import MarkdownLexer
+from pygments.styles import get_style_by_name
+from prompt_toolkit.key_binding.bindings.page_navigation import (
+    scroll_page_up,
+    scroll_page_down,
+)
 
 
 NOTICE = """
@@ -76,170 +94,160 @@ SAMPLE_SPLIT = [
     *itertools.chain(
         *(
             iter_with_separator(line.split(" "))
-            for line in [*iter_with_separator(SAMPLE.split("\n"), "\n")]
+            for line in [*iter_with_separator(SAMPLE.strip().split("\n"), "\n")]
         )
     )
 ]
 
 
-def delayed_iterator(iterable, delay=0.01):
+async def delayed_iterator(iterable, delay=0.03):
     """Delays item yield"""
 
     for item in iterable:
-        time.sleep(delay)
+        await asyncio.sleep(delay)
         yield item
 
 
-def live_print_jolting(content_iterable: Iterable[str]):
-    """First attempt of live print that jolts the console up & down when
-    actual line count (counting text wrap) exceed console height."""
-
-    accumulated_line = ""
-
-    with Live(vertical_overflow="visible") as live:
-        for chunk in content_iterable:
-            accumulated_line += chunk
-            live.update(Markdown(accumulated_line), refresh=True)
-
-
-def live_print(content_iterable: Iterable[str]):
-    """Print content in live."""
-
-    # We need to cut at specific line to set new live instance.
-    # otherwise we get screen jolting due to Console Rewriting from
-    # non-visible line to current line, making screen go back and forth.
-    # though regex should be avoided due to cost.
-
-    iterator = iter(content_iterable)
-
-    in_code_block = False
-    code_block_lang = ""
-
-    is_eof = False
-
-    while not is_eof:
-        accumulated_line = ""
-
-        # set vertical_overflow just in case
-        with Live(vertical_overflow="visible") as live:
-            while True:
-                try:
-                    token = next(iterator)
-                except StopIteration:
-                    is_eof = True
-                    break
-
-                # if tail is newline break after print, we'd need new console
-                if token == "\n":
-                    stdout.write("\x1B[1A\n")
-                    break
-
-                # TODO: fix this crap with states
-
-                # is this code block at start of line?
-                # (since llm don't quote normally, won't care about quoted codeblocks)
-                if token.startswith("```"):
-                    if in_code_block:
-                        in_code_block = False
-
-                    else:
-                        # this must be the new codeblock.
-                        in_code_block = True
-
-                        # not sure if token is ```language or just ```.
-                        if token == "```":
-                            try:
-                                next_token = next(iterator)
-                            except StopIteration:
-                                is_eof = True
-                                break
-
-                            if not next_token == "\n":
-                                # if next token isn't, or doesn't start with newline, must be language name.
-                                code_block_lang = token
-                            else:
-                                # set empty type instead
-                                code_block_lang = ""
-
-                            # now change with token so it's added back later
-                            accumulated_line += token
-                            token = next_token
-
-                        else:
-                            # must have token with it.
-                            code_block_lang = token[3:]
-
-                # if in codeblock but accumulated_line is empty, should add new codeblock as
-                # this Live console doesn't know about it
-                elif in_code_block and not accumulated_line:
-                    # print("\r")
-                    accumulated_line = f"```{code_block_lang}\n"
-
-                accumulated_line += token
-                live.update(Markdown(accumulated_line), refresh=True)
+STYLE = Style(
+    style_from_pygments_cls(get_style_by_name("monokai")).style_rules
+    + Style.from_dict(
+        {
+            "chat_user": "#49D8FF",
+            "chat_assistant": "#FC7BFF",
+        }
+    ).style_rules
+)
 
 
-class State:
-    NORMAL = 0
-    IN_CODE_BLOCK_OPENING = 1
-    IN_CODE_BLOCK = 2
-    IN_CODE_BLOCK_CLOSING = 3
+def scroll_one_line_down() -> None:
+    """
+    scroll_offset += 1
+    """
+    w = get_app().layout.current_window
+    b = get_app().current_buffer
+
+    if w:
+        # When the cursor is at the top, move to the next line. (Otherwise, only scroll.)
+        if w.render_info:
+            info = w.render_info
+
+            if w.vertical_scroll < info.content_height - info.window_height:
+                if info.cursor_position.y <= info.configured_scroll_offsets.top:
+                    b.cursor_position += b.document.get_cursor_down_position()
+
+                w.vertical_scroll += 1
 
 
-def line_by_line_gen(content_iterable: Iterable[str]):
-    line = ""
+class App(Application):
+    kb = KeyBindings()
+    kb.add("tab")(focus_next)
+    kb.add("s-tab")(focus_previous)
 
-    for chunk in content_iterable:
-        line += chunk
-        if "\n" in line:
-            line_front, line_back = line.split("\n")
+    def __init__(self):
+        self.buffer = Buffer()
+        self.history = InMemoryHistory()
+        self.completer = WordCompleter(
+            [":exit", ":save", ":quit", ":load", ":temp", ":clear"]
+        )
 
-            yield line_front
-            line = line_back
+        self.current_area: TextArea | Label = Label(text="Model loaded")
+
+        self.split = HSplit([self.current_area], padding=2, padding_char=" ")
+
+        self.container = ScrollablePane(self.split)
+        self.window = Window()
+
+        super().__init__(
+            layout=Layout(container=FloatContainer(self.container, [])),
+            style=STYLE,
+            key_bindings=merge_key_bindings(
+                [
+                    load_key_bindings(),
+                    App.kb,
+                ]
+            ),
+            mouse_support=True,
+            full_screen=True,
+            color_depth=ColorDepth.TRUE_COLOR,
+        )
+
+    def startup(self):
+        """Extra startup setup"""
+
+        self.send_message("", "user", "cyan")
+
+    async def user_complete_message(self):
+
+        await self.bot_complete_message()
+
+        self.send_message("", "user", "cyan")
+
+    async def bot_complete_message(self):
+        self.send_message("", "assistant", "pink")
+
+        async for token in delayed_iterator(SAMPLE_SPLIT):
+            self.current_area.text += token
+            self.container.keep_cursor_visible()
+            # self.container.scroll_offsets()
+            # self.container.vertical_scroll += 1
+            # scroll_one_line_down()
+            # self.current_area.window.allow_scroll_beyond_bottom()
+            self.current_area.buffer.cursor_down()
+            self.current_area.control.move_cursor_down()
+            self.current_area.buffer.cursor_right(10000)
+
+            self.invalidate()
+
+    def send_message(self, msg: str, role: str = "", color=""):
+        """Adds message to split"""
+
+        self.current_area = TextArea(
+            text=f"{msg}",
+            lexer=PygmentsLexer(MarkdownLexer),
+            history=self.history,
+            dont_extend_height=True,
+            scrollbar=True,
+        )
+        # self.current_area.control.preferred_height(5, 10, True, None)
+        # self.current_area.window.preferred_height(5, 10)
+
+        formatted = f"<{color}>{role}</{color}>" if color else role
+
+        self.split.get_children().append(
+            HSplit(
+                [
+                    Frame(
+                        self.current_area,
+                        title=HTML(f"{formatted} - <lime>{datetime.now()}</lime>"),
+                        style=f"class:chat_{role}",
+                    )
+                ]
+            ),
+        )
+        try:
+            get_app().layout.focus(self.current_area)
+        except ValueError:
+            # probably first run before .run() call
+            pass
 
 
-def console_print(content_iterable: Iterable[str]):
-    state = State.NORMAL
-    code_block_prefix = "```\n"
+async def driver():
+    app = App()
 
-    console = Console()
+    @App.kb.add_binding("escape", "enter")
+    async def complete_message(event):
+        await app.user_complete_message()
 
-    for line in line_by_line_gen(content_iterable):
-        match state:
+    @App.kb.add("c-c")
+    async def send_command(event):
+        pass
 
-            case State.NORMAL:
-                if "```" in line:
-                    state = State.IN_CODE_BLOCK
-                    code_block_prefix = f"```{line.split('```')[-1]}\n"
-                else:
-                    console.print(Markdown(line))
-                    stdout.write("\33[A")
+    @App.kb.add("c-c")
+    def _exit(event) -> None:
+        get_app().exit()
 
-            case State.IN_CODE_BLOCK:
-                if "```" in line:
-                    # console.print(Markdown(code_block_prefix))
-                    # stdout.write("\x1B[2A\n")
-                    stdout.write("\33[2B\33[1000C\n")
-                    state = State.NORMAL
-                    continue
-
-                console.print(Markdown(code_block_prefix + line))
-                stdout.write("\33[2A\33[1000C")
-
-        # stdout.write(f"\x1B")
-
-
-def dummy_exchange_turn():
-    """Exchange turn with dummy reply text."""
-
-    while True:
-        # live_print_jolting(delayed_iterator(SAMPLE_SPLIT))
-        # live_print(delayed_iterator(SAMPLE_SPLIT))
-        console_print(delayed_iterator(SAMPLE_SPLIT))
-
-        input("Press enter >> ")
+    await app.run_async(app.startup)
 
 
 if __name__ == "__main__":
-    print(NOTICE)
-    dummy_exchange_turn()
+    asyncio.run(driver())
