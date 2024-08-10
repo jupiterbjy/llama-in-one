@@ -8,6 +8,15 @@ Dependency installation:
 py -m pip install rich psutil llama-cpp-python httpx --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 ```
 
+WARNING: If installation fails after above, try this after failure:
+```
+py -m pip install llama-cpp-python -nodep --index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+```
+
+Which will install llama-cpp-python ONLY FROM given url without installing any other dependency.
+This is required for Ramdisk users as llama cpp python cmake step has issue with ramdisk path resolving.
+
+
 Update:
 ```
 pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121 --force-reinstall --no-cache-dir
