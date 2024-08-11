@@ -9,7 +9,6 @@ but should be enough to test and fix long output Live data with various MD featu
 
 import asyncio
 import itertools
-import time
 from datetime import datetime
 
 from prompt_toolkit import Application, HTML
@@ -20,7 +19,7 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import merge_key_bindings, KeyBindings
 from prompt_toolkit.key_binding.bindings.focus import focus_next, focus_previous
 from prompt_toolkit.key_binding.defaults import load_key_bindings
-from prompt_toolkit.layout import ScrollablePane, Layout, BufferControl
+from prompt_toolkit.layout import ScrollablePane, Layout
 from prompt_toolkit.layout.containers import HSplit, FloatContainer, Window
 from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.output import ColorDepth
@@ -28,11 +27,6 @@ from prompt_toolkit.styles import style_from_pygments_cls, Style
 from prompt_toolkit.widgets import Frame, TextArea, Label
 from pygments.lexers import MarkdownLexer
 from pygments.styles import get_style_by_name
-from prompt_toolkit.key_binding.bindings.page_navigation import (
-    scroll_page_up,
-    scroll_page_down,
-)
-
 
 NOTICE = """
 Press ctrl+c to exit, enter to replay sample dummy text.
@@ -138,6 +132,12 @@ def scroll_one_line_down() -> None:
                 w.vertical_scroll += 1
 
 
+def get_frame_title_label(frame: Frame) -> Label:
+    """Fetch label of titled frame"""
+
+    return frame.container.children[1].children[3]
+
+
 class App(Application):
     kb = KeyBindings()
     kb.add("tab")(focus_next)
@@ -150,9 +150,10 @@ class App(Application):
             [":exit", ":save", ":quit", ":load", ":temp", ":clear"]
         )
 
-        self.current_area: TextArea | Label = Label(text="Model loaded")
+        self.current_frame: Frame | None = None
+        self.current_area: TextArea | None = None
 
-        self.split = HSplit([self.current_area], padding=2, padding_char=" ")
+        self.split = HSplit([Label("Model loaded")], padding=2, padding_char=" ")
 
         self.container = ScrollablePane(self.split)
         self.window = Window()
@@ -201,23 +202,37 @@ class App(Application):
     def send_message(self, msg: str, role: str = "", color=""):
         """Adds message to split"""
 
+        formatted = f"<{color}>{role}</{color}>" if color else role
+
+        # update prev area's time
+        if self.current_frame:
+            # TODO: ask if it's possible to replace cached content
+            # get_frame_title_label(self.current_frame).text = HTML(
+            #     f"{self.current_area.role} - <lime>{datetime.now()}</lime>"
+            # )
+            # get_frame_title_label(self.current_frame).formatted_text_control.reset()
+
+            pass
+
         self.current_area = TextArea(
             text=f"{msg}",
             lexer=PygmentsLexer(MarkdownLexer),
             history=self.history,
             dont_extend_height=True,
-            scrollbar=True,
+            # scrollbar=True,
         )
+        # write role in it together 'cause we don't know what's converted into title
+        self.current_area.role = formatted
+
         # self.current_area.control.preferred_height(5, 10, True, None)
         # self.current_area.window.preferred_height(5, 10)
-
-        formatted = f"<{color}>{role}</{color}>" if color else role
 
         self.split.get_children().append(
             HSplit(
                 [
                     Frame(
                         self.current_area,
+                        # title=HTML(f"{formatted}"),
                         title=HTML(f"{formatted} - <lime>{datetime.now()}</lime>"),
                         style=f"class:chat_{role}",
                     )
