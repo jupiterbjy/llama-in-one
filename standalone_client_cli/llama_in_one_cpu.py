@@ -8,14 +8,10 @@ Dependency installation:
 py -m pip install rich psutil llama-cpp-python httpx --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 ```
 
-WARNING: If installation fails after above, try this after failure:
+If extra index is not working and just starts compiling, try this instead:
 ```
-py -m pip install llama-cpp-python -nodep --index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+py -m pip install llama-cpp-python --index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 ```
-
-Which will install llama-cpp-python ONLY FROM given url without installing any other dependency.
-This is required for Ramdisk users as llama cpp python cmake step has issue with ramdisk path resolving.
-
 
 Update:
 ```
@@ -97,14 +93,6 @@ class Config:
     def __init__(self):
         # link to model url.
         self.model_url = (
-            # "https://huggingface.co/mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated-GGUF"
-            # "/resolve/main/meta-llama-3.1-8b-instruct-abliterated.Q8_0.gguf"
-            # "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"
-            # "/resolve/main/Meta-Llama-3.1-8B-Instruct-Q6_K_L.gguf"
-            # "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
-            # "/resolve/main/tinyllama-1.1b-chat-v1.0.Q5_K_M.gguf",
-            # "https://huggingface.co/bartowski/gemma-2-2b-it-abliterated-GGUF"
-            # "/resolve/main/gemma-2-2b-it-abliterated-Q5_K_S.gguf?download=true"
             "https://huggingface.co/bartowski/gemma-2-9b-it-abliterated-GGUF"
             "/resolve/main/gemma-2-9b-it-abliterated-Q5_K_S.gguf?download=true"
         )
