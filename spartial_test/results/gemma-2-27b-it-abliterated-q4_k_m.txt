@@ -1,0 +1,30 @@
+
+
+MODEL: gemma-2-27b-it-abliterated-q4_k_m.gguf
+SCORE: 0 / 2
+INPUT: (3, 7) -> (9, 2)
+OUTPUT: right->(4,7)
+right->(5,7)
+right->(6,7)
+right->(7,7)
+right->(8,7)
+right->(9,7)
+down->(9,6)
+down->(9,5)
+down->(9,4)
+down->(9,3)
+down->(9,2)
+
+
+INPUT: (8, 1) -> (5, 6)
+OUTPUT: right->(9,1)
+up->(9,2)
+up->(9,3)
+up->(9,4)
+up->(9,5)
+left->(8,5)
+left->(7,5)
+left->(6,5)
+up->(6,6)
+left->(5,6)
+
